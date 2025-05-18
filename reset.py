@@ -1,73 +1,56 @@
 import oracledb
-import getpass
-import sys
+import os
+
+# Database configuration
+DB_USER = os.getenv("DB_USER", "new_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "1521")
+DB_SERVICE = os.getenv("DB_SERVICE", "XEPDB1")
 
 def reset_database():
-    """
-    Deletes all tables and objects from the Oracle database for the Car Rental System.
-    """
-    print("\n=== Car Rental System - Oracle Database Reset ===\n")
-    
-    username = "new_user"
-    password = "password"
-    dsn = "localhost:1521/XEPDB1"
-    
     try:
-        print("\nConnecting to Oracle database...")
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-        print("Connected successfully!")
-        
-        cursor = connection.cursor()
-        
-        print("\nDropping database objects...")
-        
-        # Drop tables
-        tables = ["PAYMENTS", "RESERVE", "CUSTOMER", "CAR", "EMPLOYEE"]
-        for table in tables:
-            try_execute(cursor, f"DROP TABLE {table} CASCADE CONSTRAINTS")
-            
-        # Drop sequences
-        sequences = ["CUSTOMER_SEQ", "CAR_SEQ", "EMPLOYEE_SEQ", "RESERVE_SEQ", "PAYMENT_SEQ"]
-        for seq in sequences:
-            try_execute(cursor, f"DROP SEQUENCE {seq}")
-            
-        # Drop custom types
-        types = ["Address_Type", "Contact_Type"]
-        for type_name in types:
-            try_execute(cursor, f"DROP TYPE {type_name} FORCE")
-            
-        connection.commit()
-        print("\n=== Database reset completed successfully! ===")
-        
-        cursor.close()
-        connection.close()
-        
-    except oracledb.Error as error:
-        print(f"Oracle error: {error}")
-    except Exception as error:
-        print(f"Error: {error}")
-    finally:
-        if 'connection' in locals() and connection:
-            connection.close()
-            print("\nConnection closed.")
+        with oracledb.connect(user=DB_USER, password=DB_PASSWORD, dsn=f"{DB_HOST}:{DB_PORT}/{DB_SERVICE}") as conn:
+            with conn.cursor() as cursor:
+                # First, drop all triggers
+                try:
+                    cursor.execute("""
+                        BEGIN
+                            FOR t IN (SELECT trigger_name FROM user_triggers) LOOP
+                                EXECUTE IMMEDIATE 'DROP TRIGGER ' || t.trigger_name;
+                            END LOOP;
+                        END;
+                    """)
+                    print("Dropped all triggers")
+                except oracledb.DatabaseError as e:
+                    print(f"Error dropping triggers: {e}")
 
-def try_execute(cursor, sql):
-    """
-    Executes SQL statement and handles common errors.
-    """
-    try:
-        cursor.execute(sql)
-    except oracledb.Error as e:
-        error_obj, = e.args
-        if error_obj.code in (942, 1918, 4043):  # Ignore "does not exist" errors
-            pass
-        else:
-            print(f"Error executing: {sql[:60]}...")
-            print(f"Oracle Error: {error_obj.code}: {error_obj.message}")
+                # List of tables to drop in correct order (considering dependencies)
+                tables = [
+                    "PAYMENTS",
+                    "RESERVE",
+                    "CAR",
+                    "EMPLOYEE",
+                    "CUSTOMER",
+                    "USERS"
+                ]
+
+                # Drop each table
+                for table in tables:
+                    try:
+                        cursor.execute(f"DROP TABLE {table} CASCADE CONSTRAINTS PURGE")
+                        print(f"Dropped table: {table}")
+                    except oracledb.DatabaseError as e:
+                        print(f"Error dropping table {table}: {e}")
+
+                conn.commit()
+                print("\nDatabase reset completed successfully!")
+
+    except oracledb.DatabaseError as e:
+        print(f"Database error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
-    try:
-        reset_database()
-    except KeyboardInterrupt:
-        print("\nReset interrupted by user.")
-        sys.exit(1)
+    print("Starting database reset...")
+    reset_database()
